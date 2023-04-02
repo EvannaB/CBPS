@@ -1,0 +1,1194 @@
+---
+title: "变量平衡倾向得分法（CBPS）论文总结与复现"
+author: "卜一凡 22210180047"
+date: "2022-1-15"
+documentclass: ctexart
+geometry: "left=2.5cm,right=2cm,top=3cm,bottom=2.5cm"
+output:
+  rticles::ctex:
+    fig_caption: yes
+    number_sections: yes
+    toc: yes
+    toc_depth: 3
+classoption: "hyperref,"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# 背景与概述
+
+本文主要总结Kosuke Imai和Marc Ratkovic在2013年发表的论文Covariate balancing propensity score，论文介绍了同名的方法，简称CBPS。[<sup>1</sup>](#refer-anchor-1)
+
+倾向得分（propensity score）是因果推断的重要工具。然而，在使用中，我们常需要估计倾向得分，而过往研究证实，倾向得分模型的轻微误定就会对估计结果有重大影响。这导致了倾向得分违背其设计初衷：1983年Rosenbaum和Rubin论文[<sup>2</sup>](#refer-anchor-2)最初设计倾向得分的目的是为了减少需要的协变量，然而估计倾向得分却需要对高维协变量建模。过往文献多聚焦于倾向得分模型设定，而CBPS论文直接聚焦于优化倾向得分估计。
+
+本文提出的CBPS利用了倾向得分作为协变量平衡得分以及治疗分配的条件概率的双重性质，并利用广义矩估计（GMM）或经验似然（EL）的框架估计CBPS。论文证实了CBPS有效改善了倾向得分的实验表现。
+
+CBPS具有几个优势特性：
+
+-   依照最大化结果协变量平衡选择参数（covariate balance）（具体见数值复现部分）；
+-   拓展应用好；
+-   使用倾向得分的许多方法依旧适用，如配对（matching）和加权（weighting）。
+
+CBPS的核心思想在于，使用单一模型决定治疗分配机制和协变量平衡权重。
+
+# 理论与方法
+
+##  理论总结
+
+考虑总体$\mathcal{P}$的$N$个随机样本观测值。对于每一个个体$i$，$T_i$为二元变量，表示接受治疗与否；$X_i$是一个$K$维变量，表示处理前写变量，支撑集$\mathcal{X}$。
+
+定义倾向得分为： 
+$$\mathrm{Pr}(T_i=1|X_i=x)$$ 
+假设真实的倾向得分满足（实际实验时需要注意该条件）： 
+$$
+0<\mathrm{Pr}(T_i=1|X_i=x)<1,  \forall x\in\mathcal{X}
+\tag{1}
+$$ 
+Rosenbaum and Rubin（1983）证明了当治疗分配满足可忽略性假设: 
+$$
+\{Y_i(1),Y_i(0)\} \perp\!\!\!\perp T_i |X_i 
+\tag{2}
+$$ 
+有：
+$$
+\{Y_i(1),Y_i(0)\} \perp\!\!\!\perp T_i |\pi(X_i) 
+\tag{3}
+$$ 
+其中$Y_i(t)$表示潜在结果，$t\in\{0,1\}$，$\pi(X_i)$表示倾向得分的真值。
+
+由此可推测，以$X_i$为条件的治疗效应（treatment effect）估计方法，可以简化为以$\pi(X_i)$为条件，从而以更少的信息进行估计。这样的降维特性引出了后续众多倾向得分估计方法的研究（如配对和加权）。
+
+在观测研究（observational study）中，倾向得分未知，需要使用数据估计。通常假设一个参数模型： 
+$$
+\mathrm{Pr}(T_i=1|X_i=x)=\pi_{\beta}(X_i)
+\tag{4}
+$$
+
+其中$\beta\in \Theta$是一个$L$维未知参数。
+
+例如，逻辑模型： 
+$$
+\pi_{\beta}(X_i)=\frac{\mathrm{exp}(X_i^T\beta)}{1+\mathrm{exp}(X_i^T\beta)}
+\tag{5}
+$$
+
+此时$L=K$。
+
+而后用最大经验拟合来估计参数，常用最大似然估计： 
+$$
+\hat{\beta}_{MLE}=\mathrm{argmax_{\beta\in \Theta}} \sum_{i=1}^N T_i \mathrm{log}\{\pi_{\beta}(X_i)\}+(1-T_i) \mathrm{log}\{1-\pi_{\beta}(X_i)\}
+\tag{6}
+$$ 
+假设$\pi_{\beta}(X_i)$对$\beta$二阶连续可微，则上式可以化为一阶条件：
+
+$$
+\frac{1}{N}\sum_{i=1}^N s_{\beta}(T_i,X_i)=0, \  \ 
+s_{\beta}(T_i,X_i)=\frac{T_i\pi_{\beta}'(X_i)}{\pi_{\beta}(X_i)}-\frac{(1-T_i)\pi_{\beta}'(X_i)}{1-\pi_{\beta}(X_i)} 
+\tag{7}
+$$
+
+其中$\pi_{\beta}'(X_i)=\partial\pi_{\beta}(X_i)/\partial\beta$。
+
+实际运用中常遇到的问题是$\pi_\beta$容易被错定，因此论文提出CBPS估计这一更稳健的方法。
+
+注意到倾向得分也是一个协变量平衡得分，因此有： 
+$$
+\mathbb{E} \bigg\{\frac{T_i \tilde{X_i}}{\pi_{\beta}(X_i)}-\frac{(1-T_i) \tilde{X_i}}{1-\pi_{\beta}(X_i)}\bigg\}=0
+\tag{8}
+$$ 
+称左侧为协变量平衡矩。
+
+其中$\tilde{X_i}=f(X_i)$是M维向量值可测函数（由研究者使用模型时指定）。此时$(7)$式可以视作$(8)$中$\tilde{X_i}=\pi_\beta'(X_i)$的特例。只要期望存在，式(8)应对协变量的任意函数都成立。当$f(X_i)$取协变量的矩（不同阶），可以得到一个有关协变量矩的条件。值得注意的是，论文指出现有文献对应该包括哪些协变量的理论指导不足，故改论文中没有解决这个问题。
+
+估计被治疗部分平均治疗效应时，可能需要以控制组加权以匹配治疗组，因此矩条件变作： 
+$$
+\mathbb{E} \bigg\{{T_i \tilde{X_i}}-\frac{{\pi_{\beta}(X_i)}(1-T_i) \tilde{X_i}}{1-\pi_{\beta}(X_i)}\bigg\}=0
+\tag{9}
+$$
+
+##  估计与推断
+
+本文利用矩条件，使用GMM和EL框架估计CBPS。
+
+当参数的个数等于矩条件的个数时，称定CBPS恰好识别，若矩条件个数超过参数个数，称过度识别。当共同使用$(7)(8)$式时是过度识别的。文献显示，过度识别限制通常会提高渐近效率，但可能会导致有限样本性能较差。
+
+定义样本协变量平衡矩为（即$(8)$式左侧的样本近似）：
+
+$$
+\frac{1}{N}\sum_{i=1}^N w_\beta(T_i,X_i)\tilde{X_i},\ 
+w_\beta(T_i,X_i)=\frac{{T_i-\pi_{\beta}(X_i)} }{\pi_{\beta}(X_i)\{1-\pi_{\beta}(X_i)\}}
+\tag{10}
+$$ 
+相应的被治疗情形则对应$(9)$的样本近似： 
+
+$$
+w_\beta(T_i,X_i)=\frac{N}{N_1}\frac{{T_i-\pi_{\beta}(X_i)} }{1-\pi_{\beta}(X_i)}
+\tag{11}
+$$ 
+其中$N_1$为被治疗子样本数。
+
+首先考虑过分识别情形。使用GMM方法估计： 
+
+$$
+\hat{\beta}_{GMM}=
+argmin_{\beta\in\Theta}\bar{g}_\beta(T,X)^T\Sigma_\beta(T,X)^{-1}\bar{g}_\beta(T,X)
+\tag{12}
+$$ 
+
+样本矩条件： 
+
+$$
+\bar{g}_\beta(T,X)=\frac{1}{N}\sum_{i=1}^N{g}_\beta(T_i,X_i)
+\tag{13}
+$$ 
+
+$$
+g_{\beta}(T_i,X_i)=
+\bigg(
+\begin{array}{c}
+ss_\beta(T_i,X_i)\\
+w_{\beta}(T_i,X_i)\tilde{X_i}
+\end{array}
+\bigg)
+\tag{14}
+$$ 
+
+这里假设$\pi_\beta$和$f$满足GMM的标准正则条件。（例如，当$T_i|X_i$服从指数族分布。）
+
+论文使用连续更新的GMM估计。选择协方差矩阵作为$g_{\beta}(T,X)$的一致估计： 
+$$
+\Sigma_\beta(T,X)=
+\frac{1}{N}\sum_{i=1}^N
+\mathbb{E}\{g_\beta(T,X) g_{\beta}(T,X)^T|X_i\}
+\tag{15}
+$$ 
+这种协方差估计优于矩条件下的样本协方差，因为后者不惩罚大的权重。
+
+特别地，在逻辑回归情形，$\pi_\beta(Xi)=\mathrm{logit}^{−1}(X_i^T\beta)$: 
+$$
+\Sigma_{\beta}(T, X)=
+\frac{1}{N} 
+\sum_{i=1}^{N}
+\left(
+\begin{array}{cc}
+\pi_{\beta}\left(X_{i}\right)\left\{1-\pi_{\beta}\left(X_{i}\right)\right\} X_{i} X_{i}^{\mathrm{T}} & X_{i} \tilde{X}_{i}^{\mathrm{T}} \\
+\tilde{X}_{i} X_{i}^{\mathrm{T}} & {\left[\pi_{\beta}\left(X_{i}\right)\left\{1-\pi_{\beta}\left(X_{i}\right)\right\}\right]^{-1} \tilde{X}_{i} \tilde{X}_{i}^{\mathrm{T}}}
+\end{array}
+\right)
+\tag{16}
+$$
+
+被治疗情形： 
+$$
+\Sigma_{\beta}(T, X)=\frac{1}{N} \sum_{i=1}^{N}\left(\begin{array}{cc}
+\pi_{\beta}\left(X_{i}\right)\left\{1-\pi_{\beta}\left(X_{i}\right)\right\} X_{i} X_{i}^{\mathrm{T}} & N \pi_{\beta}\left(X_{i}\right) X_{i} \tilde{X}_{i}^{\mathrm{T}} / N_{1} \\
+N \pi_{\beta}\left(X_{i}\right) \tilde{X}_{i} X_{i}^{\mathrm{T}} / N_{1} & N^{2} \pi_{\beta}\left(X_{i}\right) /\left[N_{1}^{2}\left\{1-\pi_{\beta}\left(X_{i}\right)\right\}\right] \tilde{X}_{i} \tilde{X}_{i}^{\mathrm{T}}
+\end{array}\right)
+\tag{17}
+$$
+对于恰好识别的CBPS估计，我们使用不带得分条件的$(12)$式，寻找参数$\beta$的最优值，使目标函数等于0。
+
+也可以用经验似然估计，剖面经验似然比函数为： 
+$$ 
+R(\beta)=sup\{\prod_{i=1}^nnp_i|p_i\ge0,\sum_{i=1}^np_i=1,\sum_{i=1}^np_ig_{\beta}(T_i,X_i)=0\} 
+\tag{18}
+$$ 
+EL同样具有GMM的不变性和高阶偏差性质。
+
+##  模型设定检验
+
+过度识别情形，我们可以用过度识别条件的检验作倾向评分模型的设定检验。
+
+在GMM框架下，我们可以使用Hansen的$J$统计量： 
+$$ 
+J=N\{{\bar{g}_{\hat{\beta}_{GMM}}(T,X)}^T \Sigma_{\hat{\beta}_{GMM}}(T,X)^{-1} \bar{g}_{\hat{\beta}_{GMM}}(T,X)\}
+\tag{19}
+$$
+渐进服从$\chi^2_{L+M}$分布。检验零假设是模型设定正确，零假设成立时$J$统计量与0的偏差在抽样误差范围内。注意，不拒绝这个零假设不一定代表模型的正确设定，可能仅仅意味着测试效力不足。
+
+#  模拟与数值复现
+
+Kang和Schafer在2007年进行了一组模拟研究，引起了争议。研究表示倾向得分的轻微误定可能导致结果的糟糕表现，即使是在双稳健方法下，在两方都有轻微误差的情况下还是会表现很差。
+
+##  改进了倾向评分加权方法的性能
+
+论文（CBPS）用CBPS估计进行Kang和Schafer的模拟。
+
+四维治疗前协变量 $X_i^* = (X_{i1}^*,X_{i2}^*,X_{i3}^*,X_{i4}^*)$，四个协变量独立同分布服从标准正态分布。 真实的结果模型是一个具有这些协变量的线性回归，误差项是一个独立的同分布的标准正态随机变量，治疗观察的平均结果等于210，这是需要估计的量。真实倾向评分模型是一个以$X_i$为线性预测器的逻辑回归（$\pi_\beta(Xi)=\mathrm{logit}^{−1}(X_i^T\beta)$），这样接受治疗的平均概率等于0.5。只观察到协变量的非线性变换： 
+$$
+X_i=(X_{i1},X_{i2},X_{i3},X_{i4})
+=({\mathrm{exp}(X_{i1}^*/2),
+X_{i2}^*/\{1+\mathrm{exp}(X_{i1}^*)\}+10,
+(X_{i1}^*X_{i3}^*/25+ 0.6)^3,
+(X_{i1}^*+X_{i4}^* +20)^2})
+$$ 
+Kang和Schafer的原文中考察了四个倾向性的得分加权估计。他们使用的模型是$X_i$的逻辑回归，与真实模型（$X_i^*$的逻辑回归）有偏差。他们使用的加权估计器分别是： Horvitz--Thompson估计HT、逆概率加权估计IPW、加权最小二乘估计WLS、双稳健估计DR。其表达式如下： 
+$$
+\hat{\mu}_{\mathrm{HT}}=\frac{1}{n} \sum_{i=1}^{n} \frac{T_{i} Y_{i}}{\pi_{\hat{\beta}}\left(X_{i}\right)}
+$$
+
+$$
+\hat{\mu}_{\mathrm{IPW}}=\sum_{i=1}^{n} \frac{T_{i} Y_{i}}{\pi_{\hat{\beta}}\left(X_{i}\right)} / \sum_{i=1}^{n} \frac{T_{i}}{\pi_{\hat{\beta}}\left(X_{i}\right)}
+$$ 
+$$
+\hat{\mu}_{\mathrm{WLS}}=\frac{1}{n} \sum_{i=1}^{n} X_{i}^{\mathrm{T}} \hat{\gamma}_{\mathrm{WLS}}, \quad \hat{\gamma}_{\mathrm{WLS}}=\left\{\sum_{i=1}^{n} \frac{T_{i} X_{i} X_{i}^{\mathrm{T}}}{\pi_{\hat{\beta}}\left(X_{i}\right)}\right\}^{-1} \sum_{i=1}^{n} \frac{T_{i} X_{i} Y_{i}}{\pi_{\hat{\beta}}\left(X_{i}\right)}
+$$ 
+$$
+\hat{\mu}_{\mathrm{DR}}=\frac{1}{n} \sum_{i=1}^{n}\left\{X_{i}^{\mathrm{T}} \hat{\gamma}_{\mathrm{OLS}}+\frac{T_{i}\left(Y_{i}-X_{i}^{\mathrm{T}} \hat{\gamma}_{\mathrm{OLS}}\right)}{\pi_{\hat{\beta}}\left(X_{i}\right)}\right\}, \quad \hat{\gamma}_{\mathrm{OLS}}=\left(\sum_{i=1}^{n} T_{i} X_{i} X_{i}^{\mathrm{T}}\right)^{-1} \sum_{i=1}^{n} T_{i} X_{i} Y_{i}
+$$
+WLS和OLS都是误定的。
+
+CBPS论文使用同样的倾向和结果模型，研究CBPS是否提高了加权估计器的经验性能。使用相同的逻辑回归，但通过理论部分说明的GMM框架方法下设置$\tilde{X_i}=X_i$，使用协变量平衡矩条件。研究考察了用CBPS取代标准逻辑回归倾向评分的四种常用权重估计器的经验性能表现。
+
+与Kang和Schafer一致地，在四种情况下进行模拟:
+
+-   倾向评分和结果模型都被正确指定，
+
+-   只有倾向得分模型是正确的，
+
+-   只有结果模型是正确的，
+
+-   倾向评分和结果模型都是错误的。
+
+$T_i$对$X_i^*$的逻辑回归是正确的$\pi_\beta$模型，$Y_i$对$X_i^*$的线性回归是正确的结果模型。$T_i$对$X_i$的逻辑回归是误定的$\pi_\beta$模型，$Y_i$对$X_i$的线性回归是误定的结果模型。
+
+对于每个场景，使用200和1000两种样本量，进行10000次蒙特卡罗模拟，并计算每个估计器的偏差和均方根误差(RMSE)。偏差是估计值与$\mu = 210$之间的平均差值。RMSE是$(\hat{\mu}−\mu)^2$平均值的平方根。
+
+对于给定的场景，在四种不同倾向评分方法的基础上检查每个权重估计器的偏差和RMSE:
+
+-   标准逻辑回归，如同最初的模拟研究（"GLM"），$X_i$是线性预测器，
+
+-   恰好识别的CBPS估计，使用$X_i$的协变量平衡矩条件，不用得分条件（"CBPS1"），
+
+-   过分识别的CBPS估计，使用协变量平衡和得分条件（"CBPS2"），
+
+-   真实倾向得分（$\pi_\beta(Xi)=\mathrm{logit}^{−1}(X_i^{*T}\beta)$）。
+
+##  数值复现
+
+所提出的方法可以通过开源R包CBPS（Ratkovic et al.， 2012）实现，该包可从综合R档案网络（[http://cran.r-project.org/package=CBPS)](http://cran.r-project.org/package=CBPS)）获得。
+
+Kang和Schafer的模拟证实了DR在倾向得分与结果都误定（以下简称双误定）的情形下的表现差，CBPS论文进行该模拟是为了表现CBPS方法在双误定的情形下表现明显更优。因此在此仅展示双误定情形下的数据（模拟部分代码在下面给出，可以通过ymis=0选择计算正确的结果模型情形，正确倾向得分则可以将$X_i$更改为$X_i^*$实现）：[<sup>3</sup>](#refer-anchor-3)
+
+```{r}
+library(CBPS)
+```
+
+```{r}
+##monte carlo模拟求bias和RMSE
+mc.simu<-function(N,n,ps,ymis){
+  #N=mc次数 n=样本数
+  #pimodel,ymodel分别表示得分与结果误定
+  #N次mc
+  HT=vector()
+  IPW=vector()
+  WLS=vector()
+  DR=vector()
+  for(i in 1:N){
+    set.seed(i)
+    #大小为n的样本
+    X <- mvrnorm(n, mu = rep(0, 4), Sigma = diag(4))
+    prop <- 1 / (1 + exp(X[,1] - 0.5 * X[,2] +
+                         0.25*X[,3] + 0.1 * X[,4]))
+    treat <- rbinom(n, 1, prop)
+    y <- 210 + 27.4*X[,1] + 13.7*X[,2] + 13.7*X[,3] + 13.7*X[,4] + rnorm(n)
+    X.mis <- cbind(exp(X[,1]/2), X[,2]*(1+exp(X[,1]))^(-1)+10,
+                   (X[,1]*X[,3]/25+.6)^3, (X[,2]+X[,4]+20)^2)
+    
+    ######
+    ##倾向得分估计
+    if(ps=="GLM"){
+      #X_i逻辑回归（GLM）
+      model <- glm(treat ~ X.mis, family = "binomial")
+    }
+    if(ps=="CBPS1"){
+      #恰好识别CBPS
+      model <- CBPS(treat ~ X.mis, ATT = 0, method="exact")
+    }
+    if(ps=="CBPS2"){
+      #过度识别
+      model <- CBPS(treat ~ X.mis, ATT = 0)
+    }
+    if(ps=="True"){  
+      #真值
+      model <- glm(treat ~ X, family = "quasibinomial")
+    }
+    #####
+    
+   
+    ## Horwitz-Thompson estimate HT
+    HT[i]<-mean(treat*y/model$fitted.values)
+
+    ## Inverse propensity score weighting IPW
+    IPW[i]<-sum(treat*y/model$fitted.values)/sum(treat/model$fitted.values)
+    
+    #rm(list=c("y","X","prop","treat","n","X.mis","model"))
+    ## weighted least squares regression estimator WLS 
+    if(ymis){
+      gama.wls<-as.numeric(
+        lapply(as.data.frame(treat*X.mis*y/model$fitted.values),axis=1,sum))/
+        sum(treat*diag(X.mis%*%t(X.mis))/model$fitted.values)
+      WLS[i]<-mean(X.mis%*%gama.wls)
+    }else{##outcome模型正确
+      gama.wls<-as.numeric(
+        lapply(as.data.frame(treat*X.mis*y/model$fitted.values),axis=1,sum))/
+        sum(treat*diag(X.mis%*%t(X.mis))/model$fitted.values)
+      WLS[i]<-mean(X.mis%*%gama.wls)
+      }
+    if(ymis){
+    ## Doubly Robust DR
+      gama.ols<-as.numeric(lapply(as.data.frame(treat*X.mis*y),axis=1,sum))/
+        sum(treat*diag(X.mis%*%t(X.mis)))
+      DR[i]<-mean(X.mis%*%gama.ols+
+                    treat*(y-X.mis%*%gama.ols)/model$fitted.values)
+    }else{##outcome模型正确
+      gama.ols<-as.numeric(
+        lapply(as.data.frame(treat*X*y),axis=1,sum))/sum(treat*diag(X%*%t(X)))
+      DR[i]<-mean(X%*%gama.ols+treat*(y-X%*%gama.ols)/model$fitted.values)
+      }
+  }
+    HT.mean=mean(HT)
+    HT.bias=HT.mean-210
+    HT.RMSE=sqrt(mean((HT-HT.mean)^2))
+    
+    IPW.mean=mean(IPW)
+    IPW.bias=IPW.mean-210
+    IPW.RMSE=sqrt(mean((IPW-IPW.mean)^2))
+    
+    WLS.mean=mean(WLS)
+    WLS.bias=WLS.mean-210
+    WLS.RMSE=sqrt(mean((WLS-WLS.mean)^2))
+    
+    DR.mean=mean(DR)
+    DR.bias=DR.mean-210
+    DR.RMSE=sqrt(mean((DR-DR.mean)^2))
+    
+    ps.est<-c("HT","IPW","WLS","DR")
+    bias<-c(HT.bias,IPW.bias,WLS.bias,DR.bias)
+    RMSE<-c(HT.RMSE,IPW.RMSE,WLS.RMSE,DR.RMSE)
+    res<-data.frame(ps.est,bias,RMSE)
+    
+    return(res)
+}
+```
+
+倾向得分模型与结果模型都误定:
+
+### GLM
+
+```{r}
+#glm.ii.simu=mc.simu(10000,200,"GLM",1)
+#glm.ii.simu
+```
+
+### CBPS1
+
+```{r}
+#cbps1.ii.simu=mc.simu(10000,200,"CBPS1",1)
+#cbps1.ii.simu
+```
+
+### CBPS2
+
+```{r}
+#cbps2.ii.simu=mc.simu(10000,200,"CBPS2",1)
+#cbps2.ii.simu
+```
+
+### DR
+
+```{r}
+#tr.ii.simu=mc.simu(10000,200,"DR",1)
+#tr.ii.simu
+```
+
+|     | GLM        |            | CBPS1     |          | CBPS2     |          | True       |           |
+|-----|------------|------------|-----------|----------|-----------|----------|------------|-----------|
+|     | bias       | RMSE       | bias      | RMSE     | bias      | RMSE     | bias       | RMSE      |
+| HT  | 30.6241790 | 548.818007 | 1.172905  | 4.896413 | -6.103267 | 8.360613 | -0.3425970 | 13.082019 |
+| IPW | 1.5885944  | 9.258298   | -1.306826 | 3.129682 | -2.830391 | 3.385181 | -0.1638382 | 4.005802  |
+| WLS | -0.5407442 | 8.393365   | -2.917888 | 2.948215 | -4.689931 | 3.208052 | -1.5769287 | 4.023345  |
+| DR  | 7.8811236  | 214.867064 | -1.684092 | 3.023909 | -3.736238 | 3.424550 | -0.0721228 | 5.166637  |
+
+可以看到双误定情形当所有模型都存在一定程度的偏差，但两种CBPS估计明显优于GLM和DR估计。此外，整体表现恰好识别的CBPS优于过分识别的CBPS。
+
+
+论文也做了McCaffrey等人提出的倾向评分的GBM（2004）[<sup>4</sup>](#refer-anchor-4)，由于运行内存需求大，复现了10次模拟的bias和RMSE。CBPS效果优于GBM。
+
+|     |    GBM     |           |
+|-----|------------|-----------|
+|     |    bias    |   RMSE    |
+| HT  | -43.157242 | 10.686294 |
+| IPW | -6.701280  | 4.740274  |
+| WLS | -9.052684  | 3.770130  |
+| DR  | -47.424154 | 12.153149 |
+
+## 改进了倾向评分匹配方法的性能
+
+LaLonde(1986)实证评估了在没有随机治疗分配的情况下，各种估计器估计平均治疗效果无偏估计的能力。LaLonde从一项研究对平均治疗效果的无偏估计的随机研究中，通过将对照组替换为来自非实验数据集的非处理组观察结果，构建了一项“观察性研究”，结果不能重复替换前实验水平。
+
+Dehejia和Wahba(1999)回顾了LaLonde的研究，并表明倾向分数匹配估计量可以很好地复制实验基准。Smith和Todd(2005)认为，Dehejia和Wahba所报道的倾向分数匹配估计器的表现的严重依赖于他们分析的原始LaLonde数据的特定子样本（排除了非实验比较集高收入人群，减少了选择偏差），在Dehejia和Wahba样本上，其他传统估计器的效果与倾向分数匹配估计器相同。此外，倾向评分匹配估计器在应用于原始LaLonde数据时不能复制实验基准，并且对倾向评分模型规范相当敏感。
+
+CBPS论文研究了CBPS是否可以改善Smith和Todd所说的倾向分数匹配估计的不良性能。分析原始LaLonde实验样本(297个处理过的观察值和425个未处理的观察值)，并使用收入动态面板研究作为比较数据(2490个观察值)。数据中的预处理协变量包括年龄、教育程度、种族(白人、黑人或西班牙裔)、婚姻状况、高中学历、1974年的收入和1975年的收入。关心的结果变量是1978年的收益。在这个样本中，平均治疗效果的实验基准是886美元，标准误差为488美元。
+
+遵循Smith和Todd(2005)的分析，拟合三种不同的逻辑回归模型：一个线性，一个二次（其中包括非二元协变量的平方），以及Smith和Todd使用的基于Dehejia和Wahba(1999)变量选择的模型，并在二次规范中增加了西班牙裔和1974年的零收入的交互项。[<sup>5</sup>](#refer-anchor-5)
+
+协变量应尽力包括影响项目参与和结果的所有关键因素。当使用粗糙的条件变量集时，偏差倾向于更高。匹配表现最好的不一定是含特征最多的。更多的条件变量可能会加剧共支持问题，这是另一个需要考虑的问题。
+
+首先估计“评价偏差”（evaluation bias），定义为是实验样本对1978年收入的平均影响。具体步骤：首先，在给定预处理协变量的情况下估计在实验样本中的条件概率。然后，在这个估计倾向分数的基础上，将实验样本中的对照观察值（exper=1,treat=0）与非实验样本中的观察值(exper=0,treat=0)相匹配。由于两组工人都没有接受过职业培训，因此实际平均治疗效果为零。进行1对1的最近邻匹配和替换，其中匹配是在估计的倾向分数的对数几率上完成的。
+
+由于文中对于具体模型公式、变量选择、匹配方式描述并不清晰，考虑到数值试验的目的是证明CBPS方法的稳健型，因此做一个与文中模型类别与倾向得分估计类别一致的实验复现。
+
+|          |GLM    |CBPS1     |CBPS2    |
+|----------|-------|----------|---------|
+|linear    |-2458  | 	-1915   |	-989.1	|
+|          |(614.1)|  (572)   | (552.2) |
+|quadratic |-2559  | -620.2	  |-1960	  |
+|          |(589.8)|(567.4)   |(604.8)  |
+|smith&todd|-3264  |-1184 	  |-1372	  |
+|          |(696.2)|(550.6)   |(563.6)  |
+
+与真实值0相比，两个CBPS方法比GLM方法在三个模型假设下都偏差更小，在大多数情况下标准差更小，即更稳定。
+
+ATE估计部分，此处对LaLonde数据，即包括lalonde实验数据与对比的观察数据的总数据集，对受处理的样本依据GLM、CBPS1（恰好识别）、CBPS2（过度识别）估计的倾向得分匹配并计算ATE，得到的结果如下：
+
+|          |GLM    |CBPS1     |CBPS2    |
+|----------|-------|----------|---------|
+|linear    |-1195	 |  -8.889  |	-150.5	|
+|          |(722.1)|  (617.7) | (619.2) |
+|quadratic |-1699	 |-773.3	  |-505.2	  |
+|          |(789.1)|(629.3)   |(626.3)  |
+|smith&todd|-780.8 |-343.9	  |-1100	  |
+|          |(631.2)|(620.7)   |(629.7)  |
+
+而由实验数据（lalonde数据集）计算平均处理效应为：
+```{r}
+library(dplyr)
+data("lalonde")
+
+mean.ate<-lalonde%>%group_by(treat)%>%
+  summarise(mean=mean(re78))
+ate=mean.ate[2,]$mean-mean.ate[1,]$mean
+ate
+```
+
+整体来说，在线性与二次模型下，与标准逻辑回归(GLM)相比，有或没有得分方程的CBPS通常会产生更接近实验估计的匹配估计，估计也更加稳定。
+
+# 拓展
+
+## 多元处理的广义倾向评分
+
+拓展到多元处理。处理变量$T_i$有$K$种取值，即 $T_{i} \in \mathcal{T}=\{0, \ldots, K-1\}$，$K \geqslant 2$。
+
+定义广义倾向得分为多项概率：
+
+$$
+\pi_{\beta}^{k}\left(X_{i}\right)=\operatorname{Pr}\left(T_{i}=k \mid X_{i}\right)
+\tag{20}
+$$
+其中$\Sigma_{k=0}^{K-1} \pi_{\beta}^{k}\left(X_{i}\right)=1$。
+
+可以用多项逻辑回归来给倾向评分建模。与二元处理类似的，我们有基于似然框架下得分函数的矩条件:：
+$$
+\frac{1}{N} \sum_{i=1}^{N} \sum_{k=0}^{K-1}\left[\frac{1\left\{T_{i}=k\right\}}{\pi_{\beta}^{k}\left(X_{i}\right)} \cdot \frac{\partial \pi_{\beta}^{k}\left(X_{i}\right)}{\partial \beta^{\mathrm{T}}}\right]=0 
+\tag{21}
+$$
+
+由平衡条件可以得到$K-1$个矩条件：
+
+$$
+\frac{1}{N} \sum_{i=1}^{N}\left[\frac{\mathbf{1}\left\{T_{i}=k\right\} \tilde{X}_{i}}{\pi_{\beta}^{k}\left(X_{i}\right)}-\frac{\mathbf{1}\left\{T_{i}=k-1\right\} \tilde{X}_{i}}{\pi_{\beta}^{k-1}\left(X_{i}\right)}\right]=0,\ k=1,\dots,K-1
+\tag{22}
+$$
+这些矩条件可以在GMM或EL框架下与式(21)的矩条件组合。
+
+## 推广实验结果
+
+当实验样本不具有代表性时，将实验结果推广到目标人群。
+
+实验样本容量$N_{\mathrm{e}}$，二元处理$T_{i}$完全随机。 令$S_{i}$ 为样本指示变量，$S_{i}=1$ 代表个体$i$在实验样本中，否则$S_{i}=0$。在这种情况下，“倾向得分”的定义为给定预处理特征的实验样本中的条件概率：
+
+$$
+\pi_{\beta}\left(X_{i}\right)=\operatorname{Pr}\left(S_{i}=1 \mid X_{i}\right) 
+\tag{23}
+$$
+除实验样本外，我们假设有一个代表目标总体$\mathcal{P}$的随机样本可用，其样本量为$N_{\text {ne }}$。
+不失一般性，假设前面$N_{\mathrm{e}}$个个体属于实验样本，即$S_{i}=1$，$i=1, \ldots, N_{\mathrm{e}}$。
+后面$N_{\mathrm{ne}}$个个体属于非实验样本，即$S_{i}=0$，$i=N_{\mathrm{e}}+1, \ldots, N$。$N=N_{\mathrm{e}}+N_{\text {ne }}$为总样本量。
+
+推广试验结果，需要假设$\left\{Y_{i}(1), Y_{i}(0)\right\} \perp\!\!\!\perp S_{i} \mid X_{i}$ 和 $0<\pi_{\beta}\left(X_{i}\right)<1$。假设保证了以$X_{i}$为条件可以消除样本选择偏差。在此假设下，倾向得分$\pi_{\beta}\left(X_{i}\right)$可以通过模型拟合估计，例如：以$S_{i}$ 为响应变量的逻辑回归。此种情形的矩条件为：
+$$
+\frac{1}{N} \sum_{i=1}^{N}\left\{\frac{S_{i} \pi_{\beta}^{\prime}\left(X_{i}\right)}{\pi_{\beta}\left(X_{i}\right)}-\frac{\left(1-S_{i}\right) \pi_{\beta}^{\prime}\left(X_{i}\right)}{1-\pi_{\beta}\left(X_{i}\right)}\right\}=0
+\tag{24}
+$$
+若倾向得分正确，则适当地为实验样本中的协变量加权，可以使其分布近似于非实验样本的加权：
+$$
+\frac{1}{N} \sum_{i=1}^{N}\left\{\frac{S_{i} \tilde{X}_{i}}{\pi_{\beta}\left(X_{i}\right)}-\frac{\left(1-S_{i}\right) \tilde{X}_{i}}{1-\pi_{\beta}\left(X_{i}\right)}\right\}=0
+\tag{25}
+$$
+其中$\tilde{X}_{i}=f\left(X_{i}\right)$是协变量的$M$维向量值函数。式(24)和式(25)中给出的矩条件可以在GMM或EL框架下组合，以估计倾向得分。
+
+
+
+# 总结
+
+倾向评分匹配和加权方法已成为各学科研究人员在观察性研究中进行因果推断的流行工具。倾向评分方法也已扩展到各种其他设置，包括纵向数据，非二元处理制度和推广的实验结果。但人们很少关注倾向得分应该的估计问题。CBPS方法通过直接结合倾向评分的关键协变量平衡特性，在GMM或EL框架内估计倾向分数，实现了倾向评分的稳健高效参数估计。
+
+虽然论文中给出数值试验，证明CBPS可以显著提高倾向评分加权和匹配方法的性能，但仍有一些问题值得进一步研究。首先，尽管CBPS对模型误定相对稳健，但它的成功应用需要科学家识别一套完整的混杂因素。因此，倾向评分估计的模型选择方法还需要进一步被研究。其次，除了本文给出的拓展，更多的拓展运用有待被研究。例如，CBPS可用于改善纵向环境中边际结构模型的倾向评分估计、通过工具变量估计平均治疗效果。
+
+后续，Fong和Imai(2018)[<sup>3</sup>](#refer-anchor-3)提出针对连续策略变量的因果推断方法，即协变量均衡的泛化倾向得分方法（Covariate Balancing Generalized Propensity Score, CBGPS)。
+ 
+该论文也有一些不足之处。在表达形式上，直观地来说，本文中数值复现的部分没有明确实验过程中使用的模型公式、变量、数据匹配具体模式，或者给出参考代码，使得复现到同样结果非常困难。在论文内容上，就像文末所说的，倾向评分估计的模型选择方法还需要进一步被研究。文中对$\tilde{X_i}=f(X_i)$及$\pi_\beta$模型的选择都较为片面，虽说在证明CBPS有效的角度具有价值，但在实际运用与推广中，还需要选择$f$函数与维数、$\pi_\beta$模型的具体方法。
+
+# 参考文献
+<div id="refer-anchor-1"></div>
+[1] [Imai, K. and Ratkovic, M. (2014), Covariate balancing propensity score. J. R. Stat. Soc. B, 76: 243-263.](https://doi.org/10.1111/rssb.12027)
+
+<div id="refer-anchor-2"></div>
+[2]Rosenbaum, P. R. and Rubin, D. B. (1983) The central role of the propensity score in observational studies for causal effects. Biometrika, 70, 41–55.
+
+<div id="refer-anchor-3"></div>
+[3] Kang, J. D. and Schafer, J. L. (2007) Demystifying double robustness: a comparison of alternative strategies for estimating a population mean from incomplete data (with discussions). Statist. Sci., 22, 523–539.
+
+<div id="refer-anchor-4"></div>
+[4]Rosenbaum, P. R. and Rubin, D. B. (1983) The central role of the propensity score in observational studies for causal effects. Biometrika, 70, 41–55.
+
+<div id="refer-anchor-5"></div>
+[5]Smith, J. A. and Todd, P. E. (2005) Does matching overcome LaLonde’s critique of nonexperimental estimators? J. Econmetr., 125, 305–353.
+
+<div id="refer-anchor-6"></div>
+[6] [Fong, C., Hazlett, C., & Imai, K. (2018). Covariate balancing propensity score for a continuous treatment: Application to the efficacy of political advertisements. The Annals of Applied Statistics, 12(1), 156–177.](https://doi.org/10.1214/17-aoas1101)
+
+<div id="refer-anchor-7"></div>
+[7]https://stats.stackexchange.com/questions/580118/adjusting-the-model-by-propensity-scores-after-propensity-score-matching/580174#580174
+
+<div id="refer-anchor-8"></div>
+[8] [Daniel E. Ho, Kosuke Imai, Gary King, Elizabeth A.
+  Stuart (2011). MatchIt: Nonparametric Preprocessing for
+  Parametric Causal Inference. Journal of Statistical
+  Software, Vol. 42, No. 8, pp. 1-28.](https://doi.org/10.18637/jss.v042.i08)
+
+<div id="refer-anchor-9"></div>
+[9]https://kosukeimai.github.io/MatchIt/articles/estimating-effects.html
+
+
+
+
+# 附录
+
+## GBM代码
+```{r eval=FALSE}
+library(twang)
+HT=vector()
+IPW=vector()
+WLS=vector()
+DR=vector()
+for(i in 1:10){
+  n=200
+  set.seed(i)
+  #大小为n的样本
+  X <- mvrnorm(n, mu = rep(0, 4), Sigma = diag(4))
+  prop <- 1 / (1 + exp(X[,1] - 0.5 * X[,2] +
+                       0.25*X[,3] + 0.1 * X[,4]))
+  treat <- rbinom(n, 1, prop)
+  y <- 210 + 27.4*X[,1] + 13.7*X[,2] + 13.7*X[,3] + 13.7*X[,4] + rnorm(n)
+  X.mis <- cbind(exp(X[,1]/2), X[,2]*(1+exp(X[,1]))^(-1)+10,
+                 (X[,1]*X[,3]/25+.6)^3, (X[,2]+X[,4]+20)^2)
+  
+  model<-ps(treat~V2+V3+V4+V5,
+            data=as.data.frame(cbind(treat,X.mis)),print.level=0)
+
+  HT[i]<-mean(treat*y/model$ps$ks.mean.ATE)
+  IPW[i]<-sum(treat*y/model$ps$ks.mean.ATE)/sum(treat/model$ps$ks.mean.ATE)
+  gama.wls<-as.numeric(
+    lapply(as.data.frame(treat*X.mis*y/model$ps$ks.mean.ATE),axis=1,sum))/
+    sum(treat*diag(X.mis%*%t(X.mis))/model$ps$ks.mean.ATE)
+  WLS[i]<-mean(X.mis%*%gama.wls)
+  gama.ols<-as.numeric(
+    lapply(as.data.frame(treat*X*y),axis=1,sum))/sum(treat*diag(X%*%t(X)))
+  DR[i]<-mean(X%*%gama.ols+treat*(y-X%*%gama.ols)/model$ps$ks.mean.ATE)
+}
+HT.mean=mean(HT)
+HT.bias=HT.mean-210
+HT.RMSE=sqrt(mean((HT-HT.mean)^2))
+
+IPW.mean=mean(IPW)
+IPW.bias=IPW.mean-210
+IPW.RMSE=sqrt(mean((IPW-IPW.mean)^2))
+
+WLS.mean=mean(WLS)
+WLS.bias=WLS.mean-210
+WLS.RMSE=sqrt(mean((WLS-WLS.mean)^2))
+
+DR.mean=mean(DR)
+DR.bias=DR.mean-210
+DR.RMSE=sqrt(mean((DR-DR.mean)^2))
+
+ps.est<-c("HT","IPW","WLS","DR")
+bias<-c(HT.bias,IPW.bias,WLS.bias,DR.bias)
+RMSE<-c(HT.RMSE,IPW.RMSE,WLS.RMSE,DR.RMSE)
+res<-data.frame(ps.est,bias,RMSE)
+```
+
+
+```{r}
+library(dplyr)
+##Load the LaLonde data
+data(LaLonde)
+library(MatchIt)
+library("marginaleffects")
+```
+## 评估偏差
+
+```{r}
+library(MatchIt)
+```
+
+### lineaer
+```{r}
+fit <- glm(exper ~ age + educ + re75 + re74 + 
+             I(re75==0) + I(re74==0),
+           #age + educ + hisp +black + married + 
+           #      nodegr + re74 + re75,
+           data = LaLonde,
+           family = binomial(link = "logit"))
+#summary(fit)
+## matching via MatchIt: one to one nearest neighbor with replacement
+nonex.control<-LaLonde%>%
+  mutate(ps=fit$fitted.values)%>%
+  filter(treat==0)
+## 1-1 nearest
+m.out <- matchit(exper ~ ps, method = "nearest",
+                 estimand = "ATT",
+                 data = nonex.control, replace = TRUE)
+#summary(m.out)
+#plot(m.out)
+#plot(m.out,type="hist")
+#plot(m.out,type="jitter")
+
+md<-match.data(m.out)
+#Linear model with covariates
+fit1 <- lm(re78 ~ exper*distance,
+           data = md, weights = weights)
+
+comp1 <- comparisons(fit1,
+                     variables = "exper",
+                     vcov = ~subclass,
+                     newdata = subset(md, exper == 1),
+                     wts = "weights")
+summary(comp1)
+```
+
+```{r}
+fit <- CBPS(exper ~ age + educ + re75 + re74 + 
+             I(re75==0) + I(re74==0),
+           data = LaLonde, ATT = 1,method="exact")
+#summary(fit)
+## matching via MatchIt: one to one nearest neighbor with replacement
+nonex.control<-LaLonde%>%
+  mutate(ps=fit$fitted.values)%>%
+  filter(treat==0)
+## 1-1 nearest
+m.out <- matchit(exper ~ ps, method = "nearest",
+                 estimand = "ATT",
+                 data = nonex.control, replace = TRUE)
+#summary(m.out)
+#plot(m.out)
+#plot(m.out,type="hist")
+#plot(m.out,type="jitter")
+
+md<-match.data(m.out)
+#Linear model with covariates
+fit1 <- lm(re78 ~ exper*distance,
+           data = md, weights = weights)
+
+comp1 <- comparisons(fit1,
+                     variables = "exper",
+                     vcov = ~subclass,
+                     newdata = subset(md, exper == 1),
+                     wts = "weights")
+summary(comp1)
+```
+
+```{r}
+fit <- CBPS(exper ~ age + educ + re75 + re74 + 
+             I(re75==0) + I(re74==0),
+           data = LaLonde, ATT = 1)
+#summary(fit)
+## matching via MatchIt: one to one nearest neighbor with replacement
+nonex.control<-LaLonde%>%
+  mutate(ps=fit$fitted.values)%>%
+  filter(treat==0)
+## 1-1 nearest
+m.out <- matchit(exper ~ ps, method = "nearest",
+                 estimand = "ATT",
+                 data = nonex.control, replace = TRUE)
+#summary(m.out)
+#plot(m.out)
+#plot(m.out,type="hist")
+#plot(m.out,type="jitter")
+
+md<-match.data(m.out)
+#Linear model with covariates
+fit1 <- lm(re78 ~ exper*distance,
+           data = md, weights = weights)
+
+comp1 <- comparisons(fit1,
+                     variables = "exper",
+                     vcov = ~subclass,
+                     newdata = subset(md, exper == 1),
+                     wts = "weights")
+summary(comp1)
+```
+
+
+### quadratic
+```{r}
+fit <- glm(exper ~ age+I(age^2) + educ + I(educ^2) + 
+             re75 + I(re75^2) + re74  +I(re74^2)+
+              I(re75==0) + I(re74==0),
+           #age + educ + hisp +black + married + 
+           #      nodegr + re74 + re75,
+           data = LaLonde,
+           family = binomial(link = "logit"))
+#summary(fit)
+## matching via MatchIt: one to one nearest neighbor with replacement
+nonex.control<-LaLonde%>%
+  mutate(ps=fit$fitted.values)%>%
+  filter(treat==0)
+## 1-1 nearest
+m.out <- matchit(exper ~ ps, method = "nearest",
+                 estimand = "ATT",
+                 data = nonex.control, replace = TRUE)
+#summary(m.out)
+#plot(m.out)
+#plot(m.out,type="hist")
+#plot(m.out,type="jitter")
+
+md<-match.data(m.out)
+#Linear model with covariates
+fit1 <- lm(re78 ~ exper*distance,
+           data = md, weights = weights)
+
+comp1 <- comparisons(fit1,
+                     variables = "exper",
+                     vcov = ~subclass,
+                     newdata = subset(md, exper == 1),
+                     wts = "weights")
+summary(comp1)
+```
+
+```{r}
+fit <- CBPS(exper ~ age+I(age^2) + educ + I(educ^2) + 
+             re75 + I(re75^2) + re74  +I(re74^2)+
+              I(re75==0) + I(re74==0),
+           data = LaLonde, ATT = 1,method="exact")
+#summary(fit)
+## matching via MatchIt: one to one nearest neighbor with replacement
+nonex.control<-LaLonde%>%
+  mutate(ps=fit$fitted.values)%>%
+  filter(treat==0)
+## 1-1 nearest
+m.out <- matchit(exper ~ ps, method = "nearest",
+                 estimand = "ATT",
+                 data = nonex.control, replace = TRUE)
+#summary(m.out)
+#plot(m.out)
+#plot(m.out,type="hist")
+#plot(m.out,type="jitter")
+
+md<-match.data(m.out)
+#Linear model with covariates
+fit1 <- lm(re78 ~ exper*distance,
+           data = md, weights = weights)
+
+comp1 <- comparisons(fit1,
+                     variables = "exper",
+                     vcov = ~subclass,
+                     newdata = subset(md, exper == 1),
+                     wts = "weights")
+summary(comp1)
+```
+
+```{r}
+fit <- CBPS(exper ~ age+I(age^2) + educ + I(educ^2) + 
+             re75 + I(re75^2) + re74  +I(re74^2)+
+              I(re75==0) + I(re74==0),
+           data = LaLonde, ATT = 1)
+#summary(fit)
+## matching via MatchIt: one to one nearest neighbor with replacement
+nonex.control<-LaLonde%>%
+  mutate(ps=fit$fitted.values)%>%
+  filter(treat==0)
+## 1-1 nearest
+m.out <- matchit(exper ~ ps, method = "nearest",
+                 estimand = "ATT",
+                 data = nonex.control, replace = TRUE)
+#summary(m.out)
+#plot(m.out)
+#plot(m.out,type="hist")
+#plot(m.out,type="jitter")
+
+md<-match.data(m.out)
+#Linear model with covariates
+fit1 <- lm(re78 ~ exper*distance,
+           data = md, weights = weights)
+
+comp1 <- comparisons(fit1,
+                     variables = "exper",
+                     vcov = ~subclass,
+                     newdata = subset(md, exper == 1),
+                     wts = "weights")
+summary(comp1)
+```
+
+
+
+### Smith and Todd
+```{r}
+fit <- glm(exper ~ age+I(age^2) + educ + I(educ^2) + 
+             re75 + I(re75^2) + re74  +I(re74^2)+
+              I(re75==0) + I(re74==0)+
+             I(hisp)*I(re74==0),
+           #age + educ + hisp +black + married + 
+           #      nodegr + re74 + re75,
+           data = LaLonde,
+           family = binomial(link = "logit"))
+#summary(fit)
+## matching via MatchIt: one to one nearest neighbor with replacement
+nonex.control<-LaLonde%>%
+  mutate(ps=fit$fitted.values)%>%
+  filter(treat==0)
+## 1-1 nearest
+m.out <- matchit(exper ~ ps, method = "nearest",
+                 estimand = "ATT",
+                 data = nonex.control, replace = TRUE)
+#summary(m.out)
+#plot(m.out)
+#plot(m.out,type="hist")
+#plot(m.out,type="jitter")
+
+md<-match.data(m.out)
+#Linear model with covariates
+fit1 <- lm(re78 ~ exper*distance,
+           data = md, weights = weights)
+
+comp1 <- comparisons(fit1,
+                     variables = "exper",
+                     vcov = ~subclass,
+                     newdata = subset(md, exper == 1),
+                     wts = "weights")
+summary(comp1)
+```
+
+
+```{r}
+fit <- CBPS(exper ~ age+I(age^2) + educ + I(educ^2) + 
+             re75 + I(re75^2) + re74  +I(re74^2)+
+              I(re75==0) + I(re74==0)+
+             I(hisp)*I(re74==0),
+           data = LaLonde, ATT = 1,method="exact")
+#summary(fit)
+## matching via MatchIt: one to one nearest neighbor with replacement
+nonex.control<-LaLonde%>%
+  mutate(ps=fit$fitted.values)%>%
+  filter(treat==0)
+## 1-1 nearest
+m.out <- matchit(exper ~ ps, method = "nearest",
+                 estimand = "ATT",
+                 data = nonex.control, replace = TRUE)
+#summary(m.out)
+#plot(m.out)
+#plot(m.out,type="hist")
+#plot(m.out,type="jitter")
+
+md<-match.data(m.out)
+#Linear model with covariates
+fit1 <- lm(re78 ~ exper*distance,
+           data = md, weights = weights)
+
+comp1 <- comparisons(fit1,
+                     variables = "exper",
+                     vcov = ~subclass,
+                     newdata = subset(md, exper == 1),
+                     wts = "weights")
+summary(comp1)
+```
+
+```{r}
+fit <- CBPS(exper ~ age+I(age^2) + educ + I(educ^2) + 
+             re75 + I(re75^2) + re74  +I(re74^2)+
+              I(re75==0) + I(re74==0)+
+             I(hisp)*I(re74==0),
+           data = LaLonde, ATT = 1)
+#summary(fit)
+## matching via MatchIt: one to one nearest neighbor with replacement
+nonex.control<-LaLonde%>%
+  mutate(ps=fit$fitted.values)%>%
+  filter(treat==0)
+## 1-1 nearest
+m.out <- matchit(exper ~ ps, method = "nearest",
+                 estimand = "ATT",
+                 data = nonex.control, replace = TRUE)
+#summary(m.out)
+#plot(m.out)
+#plot(m.out,type="hist")
+#plot(m.out,type="jitter")
+
+md<-match.data(m.out)
+#Linear model with covariates
+fit1 <- lm(re78 ~ exper*distance,
+           data = md, weights = weights)
+
+comp1 <- comparisons(fit1,
+                     variables = "exper",
+                     vcov = ~subclass,
+                     newdata = subset(md, exper == 1),
+                     wts = "weights")
+summary(comp1)
+```
+
+
+## 最近邻匹配估计ATE
+
+匹配估计部分主要使用了MatchIt包。
+参考[<sup>6</sup>](#refer-anchor-6)、[<sup>7</sup>](#refer-anchor-7)、[<sup>8</sup>](#refer-anchor-8)。
+计算ATE主要使用marginaleffects包的comparisons函数。
+
+### linear
+```{r}
+fit <- glm(treat ~ age + educ + re75 + re74 + 
+             I(re75==0) + I(re74==0),
+           data = LaLonde,
+           family = binomial(link = "logit"))
+#summary(fit)
+## matching via MatchIt: one to one nearest neighbor with replacement
+
+## 1-1 nearest
+m.out <- matchit(treat ~ fitted(fit), method = "nearest",
+                 estimand = "ATT",
+                 data = LaLonde, replace = TRUE)
+#summary(m.out)
+#plot(m.out)
+#plot(m.out,type="hist")
+#plot(m.out,type="jitter")
+
+md<-match.data(m.out)
+#Linear model with covariates
+fit1 <- lm(re78 ~ treat*distance,
+           data = md, weights = weights)
+
+comp1 <- comparisons(fit1,
+                     variables = "treat",
+                     vcov = ~subclass,
+                     newdata = subset(md, treat == 1),
+                     wts = "weights")
+summary(comp1)
+```
+
+```{r}
+## CBPS1 linear
+fit <- CBPS(treat ~ age + educ + re75 + re74 +
+              I(re75==0) + I(re74==0),
+            data = LaLonde, ATT = 1,method="exact")
+#summary(fit)
+m.out <- matchit(treat ~ fitted(fit), method = "nearest",
+ data = LaLonde, replace = TRUE)
+ 
+md<-match.data(m.out)
+#Linear model with ps
+fit1 <- lm(re78 ~ treat*distance,
+           data = md, weights = weights)
+
+comp1 <- comparisons(fit1,
+                     variables = "treat",
+                     vcov = ~subclass,
+                     newdata = subset(md, treat == 1),
+                     wts = "weights")
+summary(comp1)
+```
+
+```{r}
+## CBPS2 linear
+fit <- CBPS(treat ~ age + educ + re75  + re74+
+              I(re75==0) + I(re74==0),
+            data = LaLonde, ATT = TRUE)
+#summary(fit)
+## matching via MatchIt: one to one nearest neighbor with replacement
+
+m.out <- matchit(treat ~ fitted(fit), method = "nearest",
+ data = LaLonde, replace = TRUE)
+
+md<-match.data(m.out)
+#Linear model with ps
+fit1 <- lm(re78 ~ treat*distance,
+           data = md, weights = weights)
+
+comp1 <- comparisons(fit1,
+                     variables = "treat",
+                     vcov = ~subclass,
+                     newdata = subset(md, treat == 1),
+                     wts = "weights")
+summary(comp1)  
+```
+
+### quadratic
+```{r}
+## GLM quadra
+fit <- glm(treat ~ age+I(age^2) + educ + I(educ^2) + 
+             re75 + I(re75^2) + re74  +I(re74^2)+
+              I(re75==0) + I(re74==0),
+            data = LaLonde,
+           binomial(link = "logit"))
+#summary(fit)
+## matching via MatchIt: one to one nearest neighbor with replacement
+
+m.out <- matchit(treat ~ fitted(fit), method = "nearest",
+ data = LaLonde, replace = TRUE)
+  
+md<-match.data(m.out)
+#Linear model with ps
+fit1 <- lm(re78 ~ treat*distance,
+           data = md, weights = weights)
+ 
+comp1 <- comparisons(fit1,
+                     variables = "treat",
+                     vcov = ~subclass,
+                     newdata = subset(md, treat == 1),
+                     wts = "weights")
+summary(comp1) 
+```
+
+```{r}
+## CBPS1 quadratic
+fit <- CBPS(treat ~ age+I(age^2) + educ + I(educ^2) + 
+              re75 + I(re75^2) + re74 + I(re74^2) +
+              I(re75==0) + I(re74==0),
+            data = LaLonde, ATT = 1,method="exact")
+#summary(fit)
+## matching via MatchIt: one to one nearest neighbor with replacement
+
+m.out <- matchit(treat ~ fitted(fit), method = "nearest",
+ data = LaLonde, replace = TRUE)
+
+md<-match.data(m.out)
+#Linear model with ps
+fit1 <- lm(re78 ~ treat*distance,
+           data = md, weights = weights)
+
+comp1 <- comparisons(fit1,
+                     variables = "treat",
+                     vcov = ~subclass,
+                     newdata = subset(md, treat == 1),
+                     wts = "weights")
+summary(comp1) 
+```
+
+```{r}
+## CBPS2 quadratic
+fit <- CBPS(treat ~  age+I(age^2) + educ + I(educ^2) + 
+              re75 + I(re75^2) + re74 + I(re74^2) +
+              I(re75==0) + I(re74==0),
+            data = LaLonde, ATT = TRUE)
+#summary(fit)
+## matching via MatchIt: one to one nearest neighbor with replacement
+
+m.out <- matchit(treat ~ fitted(fit), method = "nearest",
+ data = LaLonde, replace = TRUE)
+  
+md<-match.data(m.out)
+#Linear model with ps
+fit1 <- lm(re78 ~ treat*distance,
+           data = md, weights = weights)
+
+comp1 <- comparisons(fit1,
+                     variables = "treat",
+                     vcov = ~subclass,
+                     newdata = subset(md, treat == 1),
+                     wts = "weights")
+summary(comp1) 
+```
+
+### Smith and Todd 2005
+```{r}
+## GLM st
+fit <- glm(treat ~ age+I(age^2) + educ + I(educ^2) + 
+             re75 + I(re75^2) + re74 + I(re74^2) + 
+              I(re75==0) + I(re74==0)+
+             I(hisp)*I(re74==0),
+            data = LaLonde,
+           family =  binomial(link = "logit"))
+#summary(fit)
+## matching via MatchIt: one to one nearest neighbor with replacement
+
+m.out <- matchit(treat ~ fitted(fit), method = "nearest",
+ data = LaLonde, replace = TRUE)
+  
+md<-match.data(m.out)
+#Linear model with ps
+fit1 <- lm(re78 ~ treat*distance,
+           data = md, weights = weights)
+
+comp1 <- comparisons(fit1,
+                     variables = "treat",
+                     vcov = ~subclass,
+                     newdata = subset(md, treat == 1),
+                     wts = "weights")
+summary(comp1) 
+```
+
+```{r}
+## CBPS1 quadratic
+fit <- CBPS(treat ~ age+I(age^2) + educ + I(educ^2) + 
+              re75 + I(re75^2) + re74 + I(re74^2) +
+              I(re75==0) + I(re74==0)+
+              hisp*I(re74==0),
+            data = LaLonde, ATT = 1,method="exact")
+#summary(fit)
+## matching via MatchIt: one to one nearest neighbor with replacement
+
+m.out <- matchit(treat ~ fitted(fit), method = "nearest",
+                 data = LaLonde, replace = TRUE)
+
+md<-match.data(m.out)
+#Linear model with ps
+fit1 <- lm(re78 ~ treat*distance,
+           data = md, weights = weights)
+
+comp1 <- comparisons(fit1,
+                     variables = "treat",
+                     vcov = ~subclass,
+                     newdata = subset(md, treat == 1),
+                     wts = "weights")
+summary(comp1) 
+```
+
+```{r}
+## CBPS2 st
+fit <- CBPS(treat ~ age+I(age^2) + educ + I(educ^2) + 
+              re75 + I(re75^2) + re74 + I(re74^2) +
+              I(re75==0) + I(re74==0)+
+              I(hisp)*I(re74==0),
+            data = LaLonde, ATT = 1)
+#summary(fit)
+## matching via MatchIt: one to one nearest neighbor with replacement
+
+m.out <- matchit(treat ~ fitted(fit), method = "nearest",
+                 data = LaLonde, replace = TRUE)
+
+md<-match.data(m.out)
+#Linear model with ps
+fit1 <- lm(re78 ~ treat*distance,
+           data = md, weights = weights)
+
+comp1 <- comparisons(fit1,
+                     variables = "treat",
+                     vcov = ~subclass,
+                     newdata = subset(md, treat == 1),
+                     wts = "weights")
+summary(comp1) 
+```
+
+
