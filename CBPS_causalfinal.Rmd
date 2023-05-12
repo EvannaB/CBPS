@@ -1,6 +1,6 @@
 ---
 title: "变量平衡倾向得分法（CBPS）论文总结与复现"
-author: "卜一凡 22210180047"
+author: "Yifan Bu"
 date: "2022-1-15"
 documentclass: ctexart
 geometry: "left=2.5cm,right=2cm,top=3cm,bottom=2.5cm"
